@@ -109,7 +109,7 @@ jobs:
         run: docker load -i /tmp/fastapi-image.tar
 
       - name: Scan Docker image with Trivy
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: local/fastapi-ci:scan
           format: table
