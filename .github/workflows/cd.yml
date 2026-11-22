@@ -1,3 +1,4 @@
+
 name: FastAPI CD
 
 on:
@@ -11,7 +12,7 @@ on:
           - google
           - azure
       image_tag:
-        description: "Тег із GHCR після успішного CI: sha-<40 символів>"
+        description: "SHA tag із GHCR після успішного CI"
         required: true
         type: string
 
@@ -20,7 +21,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: hpk-production-deployment
+  group: fastapi-production-deployment
   cancel-in-progress: false
 
 jobs:
@@ -36,30 +37,30 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
-          if [[ ! "TAG" =~ ^sha-[0-9a-f]{40} ]]; then
+          if [[ ! "$TAG" =~ ^sha-[0-9a-f]{40}$ ]]; then
             echo "Error: expected sha- followed by 40 lowercase hex characters"
             exit 1
           fi
-          REPOSITORY=(echo "REPOSITORY" | tr '[:upper:]' '[:lower:]')
-          echo "image=ghcr.io/REPOSITORY:TAG" >> "GITHUB_OUTPUT"
+
+          REPOSITORY=$(echo "$REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/$REPOSITORY:$TAG" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: validate
     runs-on: ubuntu-latest
     environment: production
     outputs:
-      service_url: \${{ steps.endpoint.outputs.url }}
+      service_url: ${{ steps.endpoint.outputs.url }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Виконується тільки для Google Cloud Run
       - name: Authenticate to Google Cloud (OIDC)
         if: inputs.platform == 'google'
         uses: google-github-actions/auth@v3
         with:
-          workload_identity_provider: \${{ vars.GCP_WIF_PROVIDER }}
-          service_account: \${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Install Google Cloud CLI
         if: inputs.platform == 'google'
@@ -68,15 +69,16 @@ jobs:
       - name: Deploy to Cloud Run
         if: inputs.platform == 'google'
         env:
-          IMAGE: \${{ needs.validate.outputs.image }}
-          PROJECT: \${{ vars.GCP_PROJECT_ID }}
-          REGION: \${{ vars.GCP_REGION }}
-          SERVICE: \${{ vars.GCP_SERVICE }}
+          IMAGE: ${{ needs.validate.outputs.image }}
+          PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          REGION: ${{ secrets.GCP_REGION }}
+          SERVICE: ${{ secrets.GCP_SERVICE }}
         shell: bash
         run: |
-          gcloud config set project "PROJECT"
-          gcloud run deploy "SERVICE" \
-            --image "IMAGE" <br>            --region "REGION" \
+          gcloud config set project "$PROJECT"
+          gcloud run deploy "$SERVICE" \
+            --image "$IMAGE" \
+            --region "$REGION" \
             --port 8000 \
             --cpu 1 \
             --memory 512Mi \
@@ -84,53 +86,61 @@ jobs:
             --max-instances 2 \
             --quiet
 
-      # Виконується тільки для Azure Container Apps
       - name: Authenticate to Azure (OIDC)
         if: inputs.platform == 'azure'
         uses: azure/login@v2
         with:
-          client-id: \${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: \${{ vars.AZURE_TENANT_ID }}
-          subscription-id: \${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy to Azure Container Apps
         if: inputs.platform == 'azure'
         env:
-          IMAGE: \${{ needs.validate.outputs.image }}
-          RESOURCE_GROUP: \${{ vars.AZURE_RESOURCE_GROUP }}
-          APP: \${{ vars.AZURE_CONTAINER_APP }}
+          IMAGE: ${{ needs.validate.outputs.image }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP: ${{ vars.AZURE_CONTAINER_APP }}
         shell: bash
         run: |
           az extension add --name containerapp --upgrade
           az containerapp update \
-            --name "APP" <br>            --resource-group "RESOURCE_GROUP" \
-            --image "IMAGE" <br>            --cpu 0.5 <br>            --memory 1.0Gi <br>            --min-replicas 0 <br>            --max-replicas 2
+            --name "$APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$IMAGE" \
+            --cpu 0.5 \
+            --memory 1.0Gi \
+            --min-replicas 0 \
+            --max-replicas 2
 
       - name: Obtain deployed service URL
         id: endpoint
         env:
           PLATFORM: ${{ inputs.platform }}
-          GCP_REGION: ${{ vars.GCP_REGION }}
-          GCP_SERVICE: ${{ vars.GCP_SERVICE }}
+          GCP_REGION: ${{ secrets.GCP_REGION }}
+          GCP_SERVICE: ${{ secrets.GCP_SERVICE }}
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
         shell: bash
         run: |
-          if [[ "PLATFORM" == "google" ]]; then
-            URL=(gcloud run services describe "GCP_SERVICE" \
-              --region "GCP_REGION" <br>              --format='value(status.url)')
+          if [[ "$PLATFORM" == "google" ]]; then
+            URL=$(gcloud run services describe "$GCP_SERVICE" \
+              --region "$GCP_REGION" \
+              --format='value(status.url)')
           else
-            FQDN=(az containerapp show \
-              --name "AZURE_CONTAINER_APP" <br>              --resource-group "AZURE_RESOURCE_GROUP" \
+            FQDN=$(az containerapp show \
+              --name "$AZURE_CONTAINER_APP" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
               --query "properties.configuration.ingress.fqdn" \
               --output tsv)
-            URL="https://FQDN"
+            URL="https://$FQDN"
           fi
-          if [[ ! "URL" =~ ^https://.+ ]]; then
+
+          if [[ ! "$URL" =~ ^https://.+ ]]; then
             echo "Could not obtain public HTTPS URL"
             exit 1
           fi
-          echo "url=URL" >> "$GITHUB_OUTPUT"
+
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
   smoke:
     needs: deploy
@@ -147,7 +157,7 @@ jobs:
           import time
           from urllib.request import urlopen
 
-          url = os.environ["SERVICE_URL"].rstrip("/") + "/common/healthcheck"
+          url = os.environ["SERVICE_URL"].rstrip("/") + "/health"
 
           for attempt in range(1, 7):
               try:
