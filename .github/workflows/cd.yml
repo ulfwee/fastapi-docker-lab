@@ -159,7 +159,7 @@ jobs:
     steps:
       - name: Verify health endpoint and JSON response
         env:
-          SERVICE_URL: ${{ needs.deploy.outputs.service_url }}
+          SERVICE_URL: https://fastapi-docker-lab-140453781194.europe-west1.run.app
         shell: bash
         run: |
           python - <<'PY'
@@ -168,7 +168,16 @@ jobs:
           import time
           from urllib.request import urlopen
 
-          url = os.environ["SERVICE_URL"].rstrip("/") + "/health"
+
+          service_url = os.environ["SERVICE_URL"].strip()
+
+          if not service_url.startswith("https://"):
+              raise ValueError(
+                  f"Invalid SERVICE_URL: {service_url!r}. "
+                  "Check deploy job output and Obtain deployed service URL step."
+              )
+
+          url = service_url.rstrip("/") + "/health"
 
           for attempt in range(1, 7):
               try:
