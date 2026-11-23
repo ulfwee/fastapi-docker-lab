@@ -15,6 +15,9 @@ health:
 strategy:
   type: canary
   stages: [0, 10, 50, 100]
+  rollback:
+    enabled: true
+    target: previous_revision
 
 platforms:
   google_cloud_run:
