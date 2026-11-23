@@ -55,6 +55,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check GitHub deployment context
+        env:
+          REPOSITORY: ${{ github.repository }}
+          ENVIRONMENT: production
+          REF: ${{ github.ref }}
+        shell: bash
+        run: |
+          echo "Repository: $REPOSITORY"
+          echo "Environment: $ENVIRONMENT"
+          echo "Git ref: $REF"
+
       - name: Authenticate to Google Cloud (OIDC)
         if: inputs.platform == 'google'
         uses: google-github-actions/auth@v3
